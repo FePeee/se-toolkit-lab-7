@@ -25,6 +25,19 @@ Add a `bot` service to the existing compose file:
 - Reads `BOT_TOKEN` and LLM credentials from environment
 - Restarts unless stopped
 
+> [!IMPORTANT]
+> **Qwen proxy networking.** The backend (`app`) is in the same compose file, so the bot reaches it by service name (`http://app:8000`). But the Qwen Code API proxy is a **separate** docker-compose project — it's on a different Docker network. The bot container can't reach it by service name or via `localhost`.
+>
+> To reach host-mapped ports from inside a container on Linux, use `extra_hosts` with `host.docker.internal`:
+>
+> ```yaml
+> bot:
+>   extra_hosts:
+>     - "host.docker.internal:host-gateway"
+> ```
+>
+> Then use `http://host.docker.internal:42005/v1` as the LLM API base URL.
+
 ### 3. Deployment verification
 
 Bot container runs alongside the backend on your VM. Both are healthy.

@@ -122,5 +122,6 @@ The first three should return real answers with data from your backend. The last
 - [ ] `--test "asdfgh"` returns a helpful message, no crash.
 - [ ] Source code contains keyboard/button setup.
 - [ ] Source code defines at least 9 tool/function schemas.
+- [ ] The LLM decides which tool to call — no regex or keyword matching in the routing path. After the LLM returns tool calls, results are fed back to the LLM for the final answer.
 - [ ] Git workflow followed.
 
