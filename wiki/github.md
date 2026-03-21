@@ -96,9 +96,10 @@ With a `GitHub` account, you can create and manage [`GitHub` repositories](#gith
 
 A `GitHub` username is a unique identifier of a [`GitHub` account](#github-account) — a user or an organization — on [the `GitHub` site](#the-github-site).
 
-Example of a username: `inno-se-toolkit`.
+> [!IMPORTANT]
+> The username doesn't include `@`.
 
-Note that this username doesn't include `@`.
+Example: `inno-se-toolkit`.
 
 #### `<your-github-username>` placeholder
 
