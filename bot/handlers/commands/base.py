@@ -160,12 +160,15 @@ async def handle_scores(text: str, deps: HandlerDeps) -> str:
 
         lines = [f"📊 Результаты по {lab_id}:"]
         for task in pass_rates:
-            task_name = task.get("task_name", task.get("task_id", "unknown"))
-            pass_rate = task.get("pass_rate", 0)
+            # API returns 'task' for name and 'avg_score' for percentage
+            task_name = task.get(
+                "task", task.get("task_name", task.get("task_id", "unknown"))
+            )
+            pass_rate = task.get("avg_score", task.get("pass_rate", 0))
             attempts = task.get("attempts", 0)
             percentage = (
-                f"{pass_rate * 100:.1f}%"
-                if isinstance(pass_rate, float)
+                f"{pass_rate:.1f}%"
+                if isinstance(pass_rate, (float, int))
                 else f"{pass_rate}%"
             )
             lines.append(f"\n• {task_name}: {percentage} ({attempts} попыток)")

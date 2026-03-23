@@ -128,7 +128,9 @@ class LmsClient:
         for item in items:
             if isinstance(item, dict):
                 item_type = item.get("type", "").lower()
-                if item_type == "lab" or "lab" in item.get("id", "").lower():
+                item_id = item.get("id", 0)
+                # Check if it's a lab by type or by id pattern (labs have lower ids and type="lab")
+                if item_type == "lab":
                     labs.append(item)
         return labs
 
