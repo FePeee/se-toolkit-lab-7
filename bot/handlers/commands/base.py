@@ -32,14 +32,14 @@ def handle_start(text: str, deps: HandlerDeps) -> str:
         Welcome message.
     """
     return (
-        "👋 Добро пожаловать в LMS Bot!\n\n"
-        "Я помогу вам взаимодействовать с LMS через Telegram.\n\n"
-        "Доступные команды:\n"
-        "/help — показать список команд\n"
-        "/health — проверить статус системы\n"
-        "/labs — показать доступные лабораторные работы\n"
-        "/scores <lab> — показать результаты по лабораторной\n\n"
-        "Также вы можете задавать вопросы естественным языком."
+        "👋 Welcome to LMS Bot!\n\n"
+        "I'll help you interact with the LMS through Telegram.\n\n"
+        "Available commands:\n"
+        "/help — list all commands\n"
+        "/health — check system status\n"
+        "/labs — show available labs\n"
+        "/scores <lab> — show scores for a lab\n\n"
+        "You can also ask questions in natural language."
     )
 
 
@@ -54,16 +54,16 @@ def handle_help(text: str, deps: HandlerDeps) -> str:
         List of available commands.
     """
     return (
-        "📚 Справка по командам:\n\n"
-        "/start — приветственное сообщение\n"
-        "/help — эта справка\n"
-        "/health — проверка работоспособности системы\n"
-        "/labs — список доступных лабораторных работ\n"
-        "/scores <lab_id> — результаты по конкретной лабораторной\n\n"
-        "Вы также можете задавать вопросы естественным языком, например:\n"
-        "• «Какие лабораторные доступны?»\n"
-        "• «Покажи мои результаты по lab-04»\n"
-        "• «Как работает система?»"
+        "📚 Command Help:\n\n"
+        "/start — welcome message\n"
+        "/help — this help message\n"
+        "/health — check system health status\n"
+        "/labs — list available laboratory works\n"
+        "/scores <lab_id> — show results for a specific lab\n\n"
+        "You can also ask questions in natural language, e.g.:\n"
+        "• 'What labs are available?'\n"
+        "• 'Show my results for lab-04'\n"
+        "• 'How does the system work?'"
     )
 
 
@@ -81,12 +81,12 @@ async def handle_health(text: str, deps: HandlerDeps) -> str:
     try:
         result = await client.health_check()
         return (
-            f"🏥 Статус системы:\n\n"
-            f"✅ Backend: здоров\n"
-            f"📦 Доступно элементов: {result['item_count']}"
+            f"🏥 System Health Status:\n\n"
+            f"✅ Backend: OK\n"
+            f"📦 Items available: {result['item_count']}"
         )
     except BackendError as e:
-        return f"🏥 Статус системы:\n\n⚠️ {e.user_message}"
+        return f"🏥 System Health Status:\n\n⚠️ {e.user_message}"
     finally:
         await client.close()
 
@@ -106,12 +106,12 @@ async def handle_labs(text: str, deps: HandlerDeps) -> str:
         labs = await client.get_labs()
         if not labs:
             return (
-                "📋 Доступные лабораторные работы:\n\n"
-                "⚠️ Список лабораторных пуст.\n"
-                "Возможно, данные ещё не синхронизированы."
+                "📋 Available Labs:\n\n"
+                "⚠️ No labs available.\n"
+                "Data may not be synced yet."
             )
 
-        lines = ["📋 Доступные лабораторные работы:"]
+        lines = ["📋 Available Labs:"]
         for lab in labs:
             lab_id = lab.get("id", "unknown")
             lab_name = lab.get("name", lab.get("title", lab_id))
@@ -127,7 +127,7 @@ async def handle_labs(text: str, deps: HandlerDeps) -> str:
 
         return "\n".join(lines)
     except BackendError as e:
-        return f"📋 Доступные лабораторные работы:\n\n⚠️ {e.user_message}"
+        return f"📋 Available Labs:\n\n⚠️ {e.user_message}"
     finally:
         await client.close()
 
@@ -145,7 +145,7 @@ async def handle_scores(text: str, deps: HandlerDeps) -> str:
     # Extract lab ID from text (e.g., "/scores lab-04" -> "lab-04")
     parts = text.strip().split(maxsplit=1)
     if len(parts) < 2:
-        return "⚠️ Укажите ID лабораторной работы.\n\nПример: /scores lab-04"
+        return "⚠️ Please specify a lab ID.\n\nExample: /scores lab-04"
 
     lab_id = parts[1]
     client = LmsClient(deps.lms_api_base_url, deps.lms_api_key)
@@ -153,12 +153,12 @@ async def handle_scores(text: str, deps: HandlerDeps) -> str:
         pass_rates = await client.get_pass_rates(lab_id)
         if not pass_rates:
             return (
-                f"📊 Результаты по {lab_id}:\n\n"
-                "⚠️ Данные о результатах отсутствуют.\n"
-                "Возможно, эта лабораторная ещё не сдана ни одним студентом."
+                f"📊 Results for {lab_id}:\n\n"
+                "⚠️ No results available.\n"
+                "This lab may not have been submitted by any student yet."
             )
 
-        lines = [f"📊 Результаты по {lab_id}:"]
+        lines = [f"📊 Results for {lab_id}:"]
         for task in pass_rates:
             # API returns 'task' for name and 'avg_score' for percentage
             task_name = task.get(
@@ -171,10 +171,10 @@ async def handle_scores(text: str, deps: HandlerDeps) -> str:
                 if isinstance(pass_rate, (float, int))
                 else f"{pass_rate}%"
             )
-            lines.append(f"\n• {task_name}: {percentage} ({attempts} попыток)")
+            lines.append(f"\n• {task_name}: {percentage} ({attempts} attempts)")
 
         return "\n".join(lines)
     except BackendError as e:
-        return f"📊 Результаты по {lab_id}:\n\n⚠️ {e.user_message}"
+        return f"📊 Results for {lab_id}:\n\n⚠️ {e.user_message}"
     finally:
         await client.close()
