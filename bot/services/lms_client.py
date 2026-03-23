@@ -1,197 +1,238 @@
-"""LMS API client with real HTTP calls."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
 
+@dataclass
+class BackendHealth:
+    ok: bool
+    detail: str
+
+
+@dataclass
+class LabInfo:
+    lab_id: str
+    title: str
+
+
+@dataclass
+class TaskPassRate:
+    task_name: str
+    pass_rate: float
+    attempts: int | None
+
+
 class BackendError(Exception):
-    """User-facing error for backend failures.
-
-    Contains a friendly message that includes the actual error details
-    for debugging, without raw tracebacks.
-    """
-
-    def __init__(self, message: str):
-        self.message = message
-        super().__init__(message)
-
-    @property
-    def user_message(self) -> str:
-        """Get the user-friendly error message."""
-        return self.message
+    def __init__(self, user_message: str) -> None:
+        super().__init__(user_message)
+        self.user_message = user_message
 
 
-class LmsClient:
-    """Client for the LMS backend API.
+class LMSClient:
+    """Thin LMS backend client used by handlers."""
 
-    This client wraps HTTP calls to the LMS API with error handling,
-    converting raw HTTP errors into user-friendly messages.
-    """
-
-    def __init__(self, base_url: str | None, api_key: str | None) -> None:
-        """Initialize the LMS client.
-
-        Args:
-            base_url: Base URL of the LMS API.
-            api_key: API key for authentication.
-        """
-        self.base_url = self._normalize_url(base_url)
+    def __init__(
+        self, base_url: str, api_key: str, timeout_seconds: float = 10.0
+    ) -> None:
+        self.base_url = self._normalize_base_url(base_url)
         self.api_key = api_key
-        self._client = httpx.AsyncClient(timeout=10.0)
+        self.timeout_seconds = timeout_seconds
 
-    def _normalize_url(self, url: str | None) -> str | None:
-        """Normalize the base URL by adding http:// if missing."""
-        if not url:
-            return None
-        if url.startswith("localhost"):
-            return f"http://{url}"
-        if not url.startswith("http://") and not url.startswith("https://"):
-            return f"http://{url}"
-        return url
+    def _normalize_base_url(self, raw_base_url: str) -> str:
+        clean = raw_base_url.strip()
+        if not clean:
+            raise BackendError(
+                "Backend error: LMS_API_BASE_URL is empty. "
+                "Set it in .env.bot.secret and try again."
+            )
+        if not clean.startswith(("http://", "https://")):
+            clean = f"http://{clean}"
+        return clean.rstrip("/")
 
-    async def close(self) -> None:
-        """Close the HTTP client."""
-        await self._client.aclose()
+    def _host_hint(self) -> str:
+        host = urlparse(self.base_url).netloc or self.base_url
+        return host
 
-    def _get_headers(self) -> dict[str, str]:
-        """Get headers for API requests."""
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        return headers
-
-    def _extract_data(self, response: httpx.Response) -> list | dict:
-        """Extract data from response, handling both list and wrapped formats.
-
-        Args:
-            response: The HTTP response.
-
-        Returns:
-            The data payload (list or dict).
-        """
-        data = response.json()
-        # Handle wrapped responses like {"data": [...], "total": N}
-        if isinstance(data, dict) and "data" in data:
-            return data["data"]
-        return data
-
-    async def get_items(self) -> list[dict]:
-        """Get all items (labs and tasks) from the backend.
-
-        Returns:
-            List of items.
-
-        Raises:
-            BackendError: If the backend is unavailable.
-        """
-        if not self.base_url:
-            raise BackendError("LMS API URL not configured. Check .env.bot.secret.")
-
+    def _request_json(
+        self,
+        path: str,
+        *,
+        params: dict[str, str | int] | None = None,
+        method: str = "GET",
+        json_body: dict[str, Any] | None = None,
+    ) -> Any:
+        url = f"{self.base_url}{path}"
+        headers = {"Authorization": f"Bearer {self.api_key}"}
         try:
-            response = await self._client.get(
-                f"{self.base_url}/items/",
-                headers=self._get_headers(),
+            response = httpx.request(
+                method,
+                url,
+                headers=headers,
+                params=params,
+                json=json_body,
+                timeout=self.timeout_seconds,
             )
             response.raise_for_status()
-            return self._extract_data(response)
-        except httpx.ConnectError as e:
+            return response.json()
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            reason = exc.response.reason_phrase
+            if 500 <= status <= 599:
+                raise BackendError(
+                    f"Backend error: HTTP {status} {reason}. "
+                    "The backend service may be down."
+                ) from exc
             raise BackendError(
-                f"Backend error: connection refused ({self.base_url}). "
-                f"Check that the services are running."
-            ) from e
-        except httpx.TimeoutException as e:
+                f"Backend error: HTTP {status} {reason}. "
+                "Check LMS_API_KEY and request parameters."
+            ) from exc
+        except httpx.ConnectError as exc:
             raise BackendError(
-                f"Backend error: timeout connecting to {self.base_url}. "
-                f"The service may be overloaded."
-            ) from e
-        except httpx.HTTPStatusError as e:
+                f"Backend error: connection refused ({self._host_hint()}). "
+                "Check that the services are running."
+            ) from exc
+        except httpx.TimeoutException as exc:
             raise BackendError(
-                f"Backend error: HTTP {e.response.status_code} {e.response.reason_phrase}. "
-                f"The backend service may be down."
-            ) from e
-        except httpx.HTTPError as e:
-            raise BackendError(
-                f"Backend error: {type(e).__name__}. Check the backend configuration."
-            ) from e
+                f"Backend error: request timed out ({self._host_hint()}). "
+                "The backend may be overloaded or unavailable."
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise BackendError(f"Backend error: {exc}") from exc
 
-    async def get_labs(self) -> list[dict]:
-        """Get list of available labs.
+    def _extract_list_payload(self, payload: Any) -> list[dict[str, Any]]:
+        if isinstance(payload, list):
+            return [item for item in payload if isinstance(item, dict)]
+        if isinstance(payload, dict):
+            for key in ("items", "results", "data", "rows"):
+                value = payload.get(key)
+                if isinstance(value, list):
+                    return [item for item in value if isinstance(item, dict)]
+        return []
 
-        Returns:
-            List of lab dictionaries with id, name, description.
+    def _pick_first_str(
+        self, row: dict[str, Any], keys: tuple[str, ...], default: str = ""
+    ) -> str:
+        for key in keys:
+            value = row.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return default
 
-        Raises:
-            BackendError: If the backend is unavailable.
-        """
-        items = await self.get_items()
-        # Filter for labs (type == "lab" or has lab-like structure)
-        labs = []
-        for item in items:
-            if isinstance(item, dict):
-                item_type = item.get("type", "").lower()
-                item_id = item.get("id", 0)
-                # Check if it's a lab by type or by id pattern (labs have lower ids and type="lab")
-                if item_type == "lab":
-                    labs.append(item)
+    def health(self) -> BackendHealth:
+        items = self.get_items()
+        return BackendHealth(
+            ok=True, detail=f"Backend is healthy. {len(items)} items available."
+        )
+
+    def get_items(self) -> list[dict[str, Any]]:
+        payload = self._request_json("/items/")
+        return self._extract_list_payload(payload)
+
+    def get_labs(self) -> list[LabInfo]:
+        items = self.get_items()
+        labs: list[LabInfo] = []
+        seen_ids: set[str] = set()
+        for row in items:
+            raw_id = self._pick_first_str(row, ("id", "item_id", "slug", "key"), "")
+            raw_type = self._pick_first_str(
+                row, ("type", "item_type", "kind"), ""
+            ).lower()
+            if raw_type and raw_type != "lab" and not raw_id.lower().startswith("lab-"):
+                continue
+            if not raw_id.lower().startswith("lab-"):
+                continue
+            title = self._pick_first_str(
+                row,
+                ("title", "name", "display_name", "label", "description"),
+                raw_id,
+            )
+            lab_id = raw_id.lower()
+            if lab_id in seen_ids:
+                continue
+            seen_ids.add(lab_id)
+            labs.append(LabInfo(lab_id=lab_id, title=title))
+        labs.sort(key=lambda item: item.lab_id)
         return labs
 
-    async def get_pass_rates(self, lab_id: str) -> list[dict]:
-        """Get pass rates for a specific lab.
+    def get_pass_rates(self, lab_id: str) -> list[TaskPassRate]:
+        payload = self._request_json("/analytics/pass-rates", params={"lab": lab_id})
+        rows = self._extract_list_payload(payload)
+        if not rows and isinstance(payload, dict):
+            nested = payload.get("pass_rates")
+            if isinstance(nested, list):
+                rows = [item for item in nested if isinstance(item, dict)]
 
-        Args:
-            lab_id: The lab identifier.
-
-        Returns:
-            List of pass rate dictionaries with task name, pass rate, attempts.
-
-        Raises:
-            BackendError: If the backend is unavailable.
-        """
-        if not self.base_url:
-            raise BackendError("LMS API URL not configured. Check .env.bot.secret.")
-
-        try:
-            response = await self._client.get(
-                f"{self.base_url}/analytics/pass-rates",
-                params={"lab": lab_id},
-                headers=self._get_headers(),
+        results: list[TaskPassRate] = []
+        for row in rows:
+            task_name = self._pick_first_str(
+                row,
+                ("task_name", "task", "name", "title", "label", "task_id"),
+                "Unknown task",
             )
-            response.raise_for_status()
-            return self._extract_data(response)
-        except httpx.ConnectError as e:
-            raise BackendError(
-                f"Backend error: connection refused ({self.base_url}). "
-                f"Check that the services are running."
-            ) from e
-        except httpx.TimeoutException as e:
-            raise BackendError(
-                f"Backend error: timeout connecting to {self.base_url}. "
-                f"The service may be overloaded."
-            ) from e
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                raise BackendError(
-                    f"Lab '{lab_id}' not found. Use /labs to see available labs."
-                ) from e
-            raise BackendError(
-                f"Backend error: HTTP {e.response.status_code} {e.response.reason_phrase}. "
-                f"The backend service may be down."
-            ) from e
-        except httpx.HTTPError as e:
-            raise BackendError(
-                f"Backend error: {type(e).__name__}. Check the backend configuration."
-            ) from e
+            pass_raw = row.get(
+                "pass_rate", row.get("rate", row.get("avg_pass_rate", 0.0))
+            )
+            attempts_raw = row.get(
+                "attempts", row.get("attempt_count", row.get("total_attempts"))
+            )
+            try:
+                pass_rate = float(pass_raw)
+            except (TypeError, ValueError):
+                pass_rate = 0.0
+            if pass_rate <= 1:
+                pass_rate *= 100.0
+            attempts: int | None
+            try:
+                attempts = int(attempts_raw) if attempts_raw is not None else None
+            except (TypeError, ValueError):
+                attempts = None
+            results.append(
+                TaskPassRate(
+                    task_name=task_name, pass_rate=pass_rate, attempts=attempts
+                )
+            )
+        return results
 
-    async def health_check(self) -> dict:
-        """Check if the LMS backend is healthy.
+    def get_learners(self) -> list[dict[str, Any]]:
+        payload = self._request_json("/learners/")
+        return self._extract_list_payload(payload)
 
-        Returns:
-            Health status dictionary with status and item count.
+    def get_scores(self, lab_id: str) -> list[dict[str, Any]]:
+        payload = self._request_json("/analytics/scores", params={"lab": lab_id})
+        return self._extract_list_payload(payload)
 
-        Raises:
-            BackendError: If the backend is unavailable.
-        """
-        items = await self.get_items()
-        return {
-            "status": "healthy",
-            "item_count": len(items),
-        }
+    def get_timeline(self, lab_id: str) -> list[dict[str, Any]]:
+        payload = self._request_json("/analytics/timeline", params={"lab": lab_id})
+        return self._extract_list_payload(payload)
+
+    def get_groups(self, lab_id: str) -> list[dict[str, Any]]:
+        payload = self._request_json("/analytics/groups", params={"lab": lab_id})
+        return self._extract_list_payload(payload)
+
+    def get_top_learners(
+        self, lab_id: str | None = None, limit: int = 5
+    ) -> list[dict[str, Any]]:
+        params: dict[str, str | int] = {"limit": limit}
+        if lab_id:
+            params["lab"] = lab_id
+        payload = self._request_json("/analytics/top-learners", params=params)
+        return self._extract_list_payload(payload)
+
+    def get_completion_rate(self, lab_id: str) -> dict[str, Any]:
+        payload = self._request_json(
+            "/analytics/completion-rate", params={"lab": lab_id}
+        )
+        if isinstance(payload, dict):
+            return payload
+        rows = self._extract_list_payload(payload)
+        return {"rows": rows}
+
+    def trigger_sync(self) -> dict[str, Any]:
+        payload = self._request_json("/pipeline/sync", method="POST", json_body={})
+        if isinstance(payload, dict):
+            return payload
+        return {"result": payload}

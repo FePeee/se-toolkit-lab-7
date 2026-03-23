@@ -1,150 +1,74 @@
-#!/usr/bin/env python3
-"""Telegram bot entry point with --test mode support.
-
-Usage:
-    uv run bot.py --test "/start"    # Test mode: prints response to stdout
-    uv run bot.py                     # Telegram mode: starts polling
-"""
+from __future__ import annotations
 
 import argparse
 import asyncio
-import sys
-from pathlib import Path
 
-# Add the bot directory to the Python path
-bot_dir = Path(__file__).resolve().parent
-sys.path.insert(0, str(bot_dir))
+from aiogram import Bot, Dispatcher
+from aiogram.types import KeyboardButton, Message, ReplyKeyboardMarkup, WebAppInfo
 
-from config import settings
-from handlers import (
-    HandlerDeps,
-    handle_help,
-    handle_health,
-    handle_labs,
-    handle_scores,
-    handle_start,
-)
-from services import LlmClient
+from config import load_config
+from handlers import route_input
+from services import LLMClient, LMSClient
 
 
-def parse_args() -> argparse.Namespace:
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="LMS Telegram Bot")
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="SE Toolkit bot entrypoint")
     parser.add_argument(
         "--test",
-        type=str,
         metavar="TEXT",
-        help="Test mode: process input and print response to stdout (no Telegram connection)",
+        help="Run command/message in local test mode and print bot response",
     )
-    return parser.parse_args()
+    return parser
 
 
-def create_handler_deps() -> HandlerDeps:
-    """Create handler dependencies from settings."""
-    return HandlerDeps(
-        lms_api_base_url=settings.lms_api_base_url,
-        lms_api_key=settings.lms_api_key,
-        llm_api_base_url=settings.llm_api_base_url,
-        llm_api_key=settings.llm_api_key,
-    )
-
-
-async def run_test_mode(text: str) -> None:
-    """Run the bot in test mode.
-
-    Args:
-        text: Input text to process (e.g., "/start", "/help", "what labs are available").
-    """
-    deps = create_handler_deps()
-
-    # Determine which handler to call based on the input
-    text_lower = text.strip().lower()
-
-    if text_lower == "/start":
-        response = handle_start(text, deps)
-    elif text_lower == "/help":
-        response = handle_help(text, deps)
-    elif text_lower == "/health":
-        response = await handle_health(text, deps)
-    elif text_lower == "/labs":
-        response = await handle_labs(text, deps)
-    elif text_lower.startswith("/scores"):
-        response = await handle_scores(text, deps)
-    else:
-        # For natural language input, use LLM client (will be implemented in Task 3)
-        llm_client = LlmClient(
-            base_url=settings.llm_api_base_url,
-            api_key=settings.llm_api_key,
-            model=settings.llm_api_model,
-        )
-        try:
-            response = await llm_client.chat(text)
-        finally:
-            await llm_client.close()
-
+def run_test_mode(text: str) -> int:
+    cfg = load_config(require_bot_token=False)
+    lms_client = LMSClient(cfg.lms_api_base_url, cfg.lms_api_key)
+    llm_client = LLMClient(cfg.llm_api_key, cfg.llm_api_base_url, cfg.llm_api_model)
+    response = route_input(text, lms_client, llm_client)
     print(response)
+    return 0
 
 
-async def run_telegram_mode() -> None:
-    """Run the bot in Telegram polling mode."""
-    # Check if bot token is configured
-    if not settings.bot_token:
-        print(
-            "Error: BOT_TOKEN not configured in .env.bot.secret\n"
-            "Please copy .env.bot.example to .env.bot.secret and fill in your bot token.",
-            file=sys.stderr,
+async def run_telegram_bot() -> int:
+    cfg = load_config(require_bot_token=True)
+    bot = Bot(token=cfg.bot_token or "")
+    dispatcher = Dispatcher()
+    lms_client = LMSClient(cfg.lms_api_base_url, cfg.lms_api_key)
+    llm_client = LLMClient(cfg.llm_api_key, cfg.llm_api_base_url, cfg.llm_api_model)
+    keyboard_rows = [
+        [KeyboardButton(text="what labs are available?")],
+        [
+            KeyboardButton(text="show me scores for lab 4"),
+            KeyboardButton(text="which lab has the lowest pass rate?"),
+        ],
+        [KeyboardButton(text="/health"), KeyboardButton(text="/help")],
+    ]
+    if cfg.miniapp_url:
+        keyboard_rows.insert(
+            0,
+            [KeyboardButton(text="Open Mini App", web_app=WebAppInfo(url=cfg.miniapp_url))],
         )
-        sys.exit(1)
+    keyboard = ReplyKeyboardMarkup(keyboard=keyboard_rows, resize_keyboard=True)
 
-    try:
-        from aiogram import Bot, Dispatcher, types
-    except ImportError:
-        print(
-            "Error: aiogram not installed. Run: uv sync",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    bot = Bot(token=settings.bot_token)
-    dp = Dispatcher()
-
-    # Register handlers
-    @dp.message()
-    async def handle_message(message: types.Message):
-        """Handle incoming messages."""
+    @dispatcher.message()
+    async def on_message(message: Message) -> None:
         text = message.text or ""
-        deps = create_handler_deps()
+        response = route_input(text, lms_client, llm_client)
+        await message.answer(response, reply_markup=keyboard)
 
-        if text == "/start":
-            response = handle_start(text, deps)
-        elif text == "/help":
-            response = handle_help(text, deps)
-        elif text == "/health":
-            response = await handle_health(text, deps)
-        elif text == "/labs":
-            response = await handle_labs(text, deps)
-        elif text.startswith("/scores"):
-            response = await handle_scores(text, deps)
-        else:
-            # Natural language handling (Task 3)
-            response = "Sorry, I only understand commands for now. Please use /help for available commands."
-
-        await message.answer(response)
-
-    print("Bot started. Press Ctrl+C to stop.")
-    await dp.start_polling(bot)
-    await bot.session.close()
+    await dispatcher.start_polling(bot)
+    return 0
 
 
-async def main() -> None:
-    """Main entry point."""
-    args = parse_args()
+def main() -> int:
+    args = build_parser().parse_args()
 
-    if args.test:
-        await run_test_mode(args.test)
-    else:
-        await run_telegram_mode()
+    if args.test is not None:
+        return run_test_mode(args.test)
+
+    return asyncio.run(run_telegram_bot())
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(main())
