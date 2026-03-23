@@ -1,3 +1,6 @@
+[tool.uv]
+concurrent-installs = 2
+
 [tool.uv.workspace]
 members = ["backend", "bot"]
 
