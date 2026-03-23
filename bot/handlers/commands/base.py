@@ -1,6 +1,14 @@
-"""Base handler types and stub implementations."""
+"""Base handler types and implementations with real backend integration."""
 
+import sys
 from dataclasses import dataclass
+from pathlib import Path
+
+# Add the bot directory to the Python path for imports
+bot_dir = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(bot_dir))
+
+from services import BackendError, LmsClient
 
 
 @dataclass
@@ -59,7 +67,7 @@ def handle_help(text: str, deps: HandlerDeps) -> str:
     )
 
 
-def handle_health(text: str, deps: HandlerDeps) -> str:
+async def handle_health(text: str, deps: HandlerDeps) -> str:
     """Handle /health command.
 
     Args:
@@ -69,21 +77,21 @@ def handle_health(text: str, deps: HandlerDeps) -> str:
     Returns:
         System health status.
     """
-    # Placeholder - will be implemented in Task 2
-    if deps.lms_api_base_url:
+    client = LmsClient(deps.lms_api_base_url, deps.lms_api_key)
+    try:
+        result = await client.health_check()
         return (
-            "🏥 Статус системы:\n\n"
-            f"✅ LMS API: подключен ({deps.lms_api_base_url})\n"
-            "⏳ Backend: проверка будет реализована в Task 2"
+            f"🏥 Статус системы:\n\n"
+            f"✅ Backend: здоров\n"
+            f"📦 Доступно элементов: {result['item_count']}"
         )
-    return (
-        "🏥 Статус системы:\n\n"
-        "⚠️ LMS API: не настроен (проверьте .env.bot.secret)\n"
-        "⏳ Backend: проверка будет реализована в Task 2"
-    )
+    except BackendError as e:
+        return f"🏥 Статус системы:\n\n⚠️ {e.user_message}"
+    finally:
+        await client.close()
 
 
-def handle_labs(text: str, deps: HandlerDeps) -> str:
+async def handle_labs(text: str, deps: HandlerDeps) -> str:
     """Handle /labs command.
 
     Args:
@@ -93,15 +101,38 @@ def handle_labs(text: str, deps: HandlerDeps) -> str:
     Returns:
         List of available labs.
     """
-    # Placeholder - will be implemented in Task 2
-    return (
-        "📋 Доступные лабораторные работы:\n\n"
-        "⏳ Список будет загружен из LMS в Task 2\n\n"
-        "Пока вы можете проверить команды /start и /help."
-    )
+    client = LmsClient(deps.lms_api_base_url, deps.lms_api_key)
+    try:
+        labs = await client.get_labs()
+        if not labs:
+            return (
+                "📋 Доступные лабораторные работы:\n\n"
+                "⚠️ Список лабораторных пуст.\n"
+                "Возможно, данные ещё не синхронизированы."
+            )
+
+        lines = ["📋 Доступные лабораторные работы:"]
+        for lab in labs:
+            lab_id = lab.get("id", "unknown")
+            lab_name = lab.get("name", lab.get("title", lab_id))
+            description = lab.get("description", "")
+            if description:
+                # Truncate long descriptions
+                if len(description) > 100:
+                    description = description[:97] + "..."
+                lines.append(f"\n• **{lab_id}** — {lab_name}")
+                lines.append(f"  {description}")
+            else:
+                lines.append(f"\n• **{lab_id}** — {lab_name}")
+
+        return "\n".join(lines)
+    except BackendError as e:
+        return f"📋 Доступные лабораторные работы:\n\n⚠️ {e.user_message}"
+    finally:
+        await client.close()
 
 
-def handle_scores(text: str, deps: HandlerDeps) -> str:
+async def handle_scores(text: str, deps: HandlerDeps) -> str:
     """Handle /scores command.
 
     Args:
@@ -114,15 +145,33 @@ def handle_scores(text: str, deps: HandlerDeps) -> str:
     # Extract lab ID from text (e.g., "/scores lab-04" -> "lab-04")
     parts = text.strip().split(maxsplit=1)
     if len(parts) < 2:
-        return (
-            "⚠️ Укажите ID лабораторной работы.\n\n"
-            "Пример: /scores lab-04"
-        )
+        return "⚠️ Укажите ID лабораторной работы.\n\nПример: /scores lab-04"
 
     lab_id = parts[1]
-    # Placeholder - will be implemented in Task 2
-    return (
-        f"📊 Результаты по {lab_id}:\n\n"
-        "⏳ Данные будут загружены из LMS в Task 2\n\n"
-        f"Запрошена лабораторная: {lab_id}"
-    )
+    client = LmsClient(deps.lms_api_base_url, deps.lms_api_key)
+    try:
+        pass_rates = await client.get_pass_rates(lab_id)
+        if not pass_rates:
+            return (
+                f"📊 Результаты по {lab_id}:\n\n"
+                "⚠️ Данные о результатах отсутствуют.\n"
+                "Возможно, эта лабораторная ещё не сдана ни одним студентом."
+            )
+
+        lines = [f"📊 Результаты по {lab_id}:"]
+        for task in pass_rates:
+            task_name = task.get("task_name", task.get("task_id", "unknown"))
+            pass_rate = task.get("pass_rate", 0)
+            attempts = task.get("attempts", 0)
+            percentage = (
+                f"{pass_rate * 100:.1f}%"
+                if isinstance(pass_rate, float)
+                else f"{pass_rate}%"
+            )
+            lines.append(f"\n• {task_name}: {percentage} ({attempts} попыток)")
+
+        return "\n".join(lines)
+    except BackendError as e:
+        return f"📊 Результаты по {lab_id}:\n\n⚠️ {e.user_message}"
+    finally:
+        await client.close()

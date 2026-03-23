@@ -16,8 +16,15 @@ bot_dir = Path(__file__).resolve().parent
 sys.path.insert(0, str(bot_dir))
 
 from config import settings
-from handlers import HandlerDeps, handle_help, handle_health, handle_labs, handle_scores, handle_start
-from services import LlmClient, LmsClient
+from handlers import (
+    HandlerDeps,
+    handle_help,
+    handle_health,
+    handle_labs,
+    handle_scores,
+    handle_start,
+)
+from services import LlmClient
 
 
 def parse_args() -> argparse.Namespace:
@@ -58,11 +65,11 @@ async def run_test_mode(text: str) -> None:
     elif text_lower == "/help":
         response = handle_help(text, deps)
     elif text_lower == "/health":
-        response = handle_health(text, deps)
+        response = await handle_health(text, deps)
     elif text_lower == "/labs":
-        response = handle_labs(text, deps)
+        response = await handle_labs(text, deps)
     elif text_lower.startswith("/scores"):
-        response = handle_scores(text, deps)
+        response = await handle_scores(text, deps)
     else:
         # For natural language input, use LLM client (will be implemented in Task 3)
         llm_client = LlmClient(
@@ -90,7 +97,7 @@ async def run_telegram_mode() -> None:
         sys.exit(1)
 
     try:
-        from aiogram import Bot, Dispatcher
+        from aiogram import Bot, Dispatcher, types
     except ImportError:
         print(
             "Error: aiogram not installed. Run: uv sync",
@@ -101,9 +108,9 @@ async def run_telegram_mode() -> None:
     bot = Bot(token=settings.bot_token)
     dp = Dispatcher()
 
-    # Register handlers (will be implemented in Task 2)
+    # Register handlers
     @dp.message()
-    async def handle_message(message):
+    async def handle_message(message: types.Message):
         """Handle incoming messages."""
         text = message.text or ""
         deps = create_handler_deps()
@@ -113,11 +120,11 @@ async def run_telegram_mode() -> None:
         elif text == "/help":
             response = handle_help(text, deps)
         elif text == "/health":
-            response = handle_health(text, deps)
+            response = await handle_health(text, deps)
         elif text == "/labs":
-            response = handle_labs(text, deps)
+            response = await handle_labs(text, deps)
         elif text.startswith("/scores"):
-            response = handle_scores(text, deps)
+            response = await handle_scores(text, deps)
         else:
             # Natural language handling (Task 3)
             response = "Извините, я пока понимаю только команды. Используйте /help для справки."
