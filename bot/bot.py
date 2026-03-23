@@ -127,7 +127,7 @@ async def run_telegram_mode() -> None:
             response = await handle_scores(text, deps)
         else:
             # Natural language handling (Task 3)
-            response = "Извините, я пока понимаю только команды. Используйте /help для справки."
+            response = "Sorry, I only understand commands for now. Please use /help for available commands."
 
         await message.answer(response)
 

@@ -57,4 +57,4 @@ class LlmClient:
             LLM response text.
         """
         # Placeholder - will be implemented in Task 3
-        return "Извините, я пока не могу обработать ваш запрос. Попробуйте использовать команды /help или /start."
+        return "Sorry, I can't process your request yet. Please use commands like /help or /start."
