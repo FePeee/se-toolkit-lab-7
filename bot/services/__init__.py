@@ -1,6 +1,4 @@
-"""Service clients for external APIs."""
+from services.llm_client import LLMClient
+from services.lms_client import BackendError, LMSClient
 
-from .lms_client import BackendError, LmsClient
-from .llm_client import LlmClient
-
-__all__ = ["LmsClient", "LlmClient", "BackendError"]
+__all__ = ["LMSClient", "LLMClient", "BackendError"]
